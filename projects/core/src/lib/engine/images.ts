@@ -56,7 +56,8 @@ async function loadOne(
 ): Promise<ImageAsset> {
   let label: string;
   let read: () => Promise<Uint8Array> | Uint8Array;
-  if (typeof src === 'string' && src.startsWith('data:')) {
+  // URL schemes are case-insensitive, so `DATA:` and `Data:` are data URLs too.
+  if (typeof src === 'string' && src.slice(0, 5).toLowerCase() === 'data:') {
     label = 'data URL';
     read = () => decodeDataUrl(src);
   } else if (typeof src === 'string') {
