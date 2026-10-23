@@ -436,6 +436,36 @@ describe('resolveStyles property coverage', () => {
     expect(() => styleOf({ border: '1 solid red blue' })).toThrow(/^ngpdf: too many values/);
   });
 
+  it.each([
+    ['thin', 1],
+    ['medium', 3],
+    ['thick', 5],
+  ])('reads the %s border width keyword as %dpt', (keyword, points) => {
+    const all = { top: points, right: points, bottom: points, left: points };
+    expect(styleOf({ border: `${keyword} solid red` }).borderWidth).toEqual(all);
+    expect(styleOf({ border: `red ${keyword}` }).borderColor.top).toEqual(RED);
+    expect(styleOf({ 'border-left': `${keyword} solid` }).borderWidth.left).toBe(points);
+    expect(styleOf({ 'border-width': keyword }).borderWidth).toEqual(all);
+    expect(styleOf({ 'border-width': `${keyword} 2` }).borderWidth.left).toBe(2);
+    expect(styleOf({ 'border-bottom-width': keyword }).borderWidth.bottom).toBe(points);
+  });
+
+  it.each([
+    ['border', '-1 solid red'],
+    ['border-top', '-2pt solid'],
+    ['border-width', '1 -1'],
+    ['border-right-width', '-0.5'],
+  ])('rejects a negative width in %s: %s', (property, value) => {
+    expect(() => styleOf({ [property]: value })).toThrow(
+      /^ngpdf: expected a non-negative length in "-[\d.]+(pt)?" on pdf-view/,
+    );
+  });
+
+  it('accepts a zero border width', () => {
+    expect(styleOf({ border: '0 solid red' }).borderWidth.top).toBe(0);
+    expect(styleOf({ 'border-width': '0' }).borderWidth.left).toBe(0);
+  });
+
   it('warns for an unsupported border style on a side shorthand too', () => {
     const warn = vi.fn();
     styleOf({ 'border-top': '1 dotted red' }, 'pdf-view', warn);

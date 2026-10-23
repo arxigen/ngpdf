@@ -191,7 +191,7 @@ function parsePoints(value: string, tag?: string): number {
   return length;
 }
 
-/** Font sizes and padding can't go below 0 in CSS; margins can. */
+/** Font sizes, padding and border widths can't go below 0 in CSS; margins can. */
 function rejectNegative<T extends Length>(length: T, value: string, tag?: string): T {
   const amount = typeof length === 'object' ? length.percent : length;
   if (typeof amount === 'number' && amount < 0) {
@@ -221,6 +221,20 @@ export function parseEdges(value: string, tag?: string): Edges<Length> {
   return parseEdgeValues(value, (token) => parseLength(token, tag), tag);
 }
 
+// CSS's border width keywords, in points.
+const BORDER_WIDTHS = new Map([
+  ['thin', 1],
+  ['medium', 3],
+  ['thick', 5],
+]);
+
+/** A border width: a length in points, or `thin`, `medium` or `thick`; never negative. */
+function parseBorderWidth(value: string, tag?: string): number {
+  const keyword = BORDER_WIDTHS.get(value.trim());
+  if (keyword !== undefined) return keyword;
+  return rejectNegative(parsePoints(value, tag), value, tag);
+}
+
 /** `<width> <style> <color>` in any order; every part is optional. */
 export function parseBorder(value: string, tag?: string): BorderParts {
   let width: number | null = null;
@@ -231,8 +245,8 @@ export function parseBorder(value: string, tag?: string): BorderParts {
   if (tokens.length > 3) return fail(`too many values in "${show(value)}"`, tag);
   for (const token of tokens) {
     const code = token.charCodeAt(0);
-    if (isDigit(code) || code === 46 || code === 43 || code === 45) {
-      width = parsePoints(token, tag);
+    if (isDigit(code) || code === 46 || code === 43 || code === 45 || BORDER_WIDTHS.has(token)) {
+      width = parseBorderWidth(token, tag);
     } else if (BORDER_STYLES.has(token)) {
       if (token === 'none' || token === 'hidden') none = true;
       else if (token !== 'solid') unsupportedStyle = token;
@@ -361,7 +375,7 @@ function apply(
     return;
   }
   if (side && property === `border-${side}-width`) {
-    style.borderWidth = withSide(style.borderWidth, side, parsePoints(value, tag));
+    style.borderWidth = withSide(style.borderWidth, side, parseBorderWidth(value, tag));
     return;
   }
   if (side && property === `border-${side}-color`) {
@@ -468,7 +482,7 @@ function apply(
       break;
     }
     case 'border-width':
-      style.borderWidth = parseEdgeValues(value, (token) => parsePoints(token, tag), tag);
+      style.borderWidth = parseEdgeValues(value, (token) => parseBorderWidth(token, tag), tag);
       break;
     case 'border-color':
       style.borderColor = parseEdgeValues(value, (token) => parseColor(token, tag), tag);
