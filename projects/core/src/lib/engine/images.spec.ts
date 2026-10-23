@@ -90,6 +90,26 @@ describe('loadImages', () => {
     expect(assets.get(node)).toEqual({ data: bytes, width: 37, height: 100 });
   });
 
+  it('decodes a percent-encoded data URL of a few hundred KB, mixing escapes and plain bytes', async () => {
+    // 300 KB after the PNG header; bytes that are letters or digits stay as they are, the rest
+    // are escaped, so the encoded text is longer than the bytes and the output must be cut to fit.
+    const header = pngHeader(640, 480);
+    const bytes = new Uint8Array(header.length + 300_000);
+    bytes.set(header);
+    for (let i = header.length; i < bytes.length; i++) bytes[i] = (i * 31) & 0xff;
+    const plain = (b: number) => /[0-9a-z]/i.test(String.fromCharCode(b));
+    const encoded = Array.from(bytes, (b) =>
+      plain(b) ? String.fromCharCode(b) : `%${b.toString(16).padStart(2, '0')}`,
+    ).join('');
+    const node = imageNode(`data:image/png,${encoded}`);
+    const started = performance.now();
+    const assets = await loadImages(root(node), writer);
+    // About 90 ms on a developer machine. As with the text budget, the margin only has to separate
+    // a linear decode on a busy CI runner with coverage on from a quadratic one.
+    expect(performance.now() - started).toBeLessThan(2000);
+    expect(assets.get(node)).toEqual({ data: bytes, width: 640, height: 480 });
+  });
+
   it('loads a Blob and an ArrayBuffer the same way', async () => {
     const blobNode = imageNode(new Blob([png as BlobPart], { type: 'image/png' }));
     const bufferNode = imageNode(png.buffer.slice(0));
