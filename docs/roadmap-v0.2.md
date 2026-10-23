@@ -46,8 +46,6 @@ it does not affect a correct document. Items that change behaviour need a design
 - `percentDecode` builds a `number[]` before the byte array; decode straight into a
   `Uint8Array`.
 - An upper-case `DATA:` URL is fetched instead of decoded.
-- A `pdf-image` with element children fails in Yoga (a measured node cannot have children);
-  reject it with an `ngpdf:` error.
 
 ## Robustness
 
