@@ -10,6 +10,7 @@ import { loadImages } from './images';
 import type { LayoutContext } from './layout';
 import { paginatePage } from './paginate';
 import { resolveStyles } from './style';
+import { createTextCache } from './text';
 import { createPdfkitWriter, type DocumentInfo, type PageOps, type PdfWriter } from './writer';
 import type { Yoga } from 'yoga-layout/load';
 
@@ -98,7 +99,15 @@ export async function renderDocument(
     const tree = dissolveHosts(document, warn);
     const styles = resolveStyles(tree, warn);
     const images = await loadImages(tree, writer);
-    const ctx: LayoutContext = { yoga, metrics: writer, images, warn, warnChars };
+    // Text measuring is cached for this render only, so renders share nothing.
+    const ctx: LayoutContext = {
+      yoga,
+      metrics: writer,
+      images,
+      warn,
+      warnChars,
+      textCache: createTextCache(),
+    };
 
     const layouts = elementChildren(tree)
       .filter((child) => child.tag === 'pdf-page')

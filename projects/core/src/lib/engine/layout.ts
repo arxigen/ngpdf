@@ -3,7 +3,7 @@ import { createNode, propsOf, textContent, type PdfNode } from '../tree/node';
 import type { TableColumn } from '../tree/table-column';
 import type { ImageAsset } from './images';
 import { anonymousTextStyle, type Edges, type Length, type ResolvedStyle } from './style';
-import { layoutText, measureText, type TextBlock } from './text';
+import { createTextCache, layoutText, measureText, type TextBlock, type TextCache } from './text';
 import type { FontMetrics } from './writer';
 
 export interface Box {
@@ -33,6 +33,11 @@ export interface LayoutContext {
   readonly warn?: (message: string) => void;
   /** Characters outside WinAnsi found in laid-out text; the caller merges them into one warning. */
   readonly warnChars?: (chars: string[]) => void;
+  /**
+   * Text measuring reused across the layouts of one render (`renderDocument` makes one per
+   * render). Without it, each `layoutBox` call uses its own.
+   */
+  readonly textCache?: TextCache;
 }
 
 type Measure = (width: number, widthMode: number) => { width: number; height: number };
@@ -339,6 +344,7 @@ export function layoutBox(
   ctx: LayoutContext,
 ): Box {
   const { yoga } = ctx;
+  const textCache = ctx.textCache ?? createTextCache();
   const config = yoga.Config.create();
   config.setPointScaleFactor(0);
   const measures = new Map<PdfNode, Measure>();
@@ -360,7 +366,7 @@ export function layoutBox(
   const measureOf = (textNode: PdfNode, style: ResolvedStyle): Measure => {
     let measure = measures.get(textNode);
     if (!measure) {
-      const inner = measureText(textContent(textNode), style, ctx.metrics);
+      const inner = measureText(textContent(textNode), style, ctx.metrics, textCache);
       const cache = new Map<number, { width: number; height: number }>();
       measure = (available, mode) => {
         const key = mode === 0 ? Infinity : available;
@@ -492,6 +498,7 @@ export function layoutBox(
               contentWidthOf(yogaNode),
               ctx.metrics,
               ctx.warnChars,
+              textCache,
             ),
           }
         : {}),

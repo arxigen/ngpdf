@@ -167,6 +167,11 @@ direct code. Strategy would add indirection with one implementation each.
   stage returns new data.
 - **No module-level mutable state in the engine**, apart from the memoised Yoga loader. Every
   render is isolated.
+  - A cache lives in the render's context instead. The text cache (`createTextCache` in
+    `engine/text.ts`) is made by `renderDocument` and passed down in `LayoutContext.textCache`: per
+    text, the collapsed text, its break positions and its blocks per font, size, line height and
+    width; per font and size, the width of each measured string. Cached blocks are frozen, because
+    every reader gets the same object.
 - **Errors.**
   - Invalid input in a template, such as an unknown unit or an image that fails to load, throws an
     `Error` whose message starts `ngpdf:` and names the element and the value.

@@ -42,7 +42,7 @@ Every `pdf-image` source is loaded in parallel: data URLs are decoded, URLs fetc
 
 ### 5. Layout with Yoga
 
-The tree is laid out with [Yoga](https://www.yogalayout.dev/), the flexbox engine also used by React Native, compiled to WebAssembly. Text is measured with the standard fonts' metrics and broken into lines at Unicode line-break opportunities, after characters outside WinAnsi are replaced with `?`. Table columns are resolved from the table's width, and cells are sized to them. Each page's content is laid out at its content width with unbounded height.
+The tree is laid out with [Yoga](https://www.yogalayout.dev/), the flexbox engine also used by React Native, compiled to WebAssembly. Text is measured with the standard fonts' metrics and broken into lines at Unicode line-break opportunities, after characters outside WinAnsi are replaced with `?`. Within a render, each text is prepared and broken into lines once per width, and each string is measured once per font and size. Table columns are resolved from the table's width, and cells are sized to them. Each page's content is laid out at its content width with unbounded height.
 
 ### 6. Pagination
 
@@ -68,6 +68,6 @@ The same component with the same inputs produces the same PDF bytes. The only ti
 
 ## Isolation
 
-Each render has its own injector, node tree and PDF writer, and the document component is destroyed when the render settles. Nothing is shared between renders apart from the loaded engine code and the compiled Yoga module, so renders can run at the same time.
+Each render has its own injector, node tree, PDF writer and text measuring cache, and the document component is destroyed when the render settles. Nothing is shared between renders apart from the loaded engine code and the compiled Yoga module, so renders can run at the same time.
 
 The source of each stage is in [`projects/core/src/lib`](https://github.com/ngpdf/ngpdf/tree/main/projects/core/src/lib) on GitHub.

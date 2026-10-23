@@ -1,7 +1,21 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { ROOT_TEXT_STYLE, type TextStyle } from './style';
-import { layoutText, measureText } from './text';
+import { createTextCache, layoutText, measureText } from './text';
 import { createPdfkitWriter, type FontMetrics, type PdfWriter } from './writer';
+
+// Counts line breakers, to see that a cached text is not broken again. It breaks as linebreak does.
+const breakers = vi.hoisted(() => ({ created: 0 }));
+vi.mock('linebreak', async (importOriginal) => {
+  const { default: LineBreaker } = await importOriginal<typeof import('linebreak')>();
+  return {
+    default: class extends LineBreaker {
+      constructor(text: string) {
+        super(text);
+        breakers.created++;
+      }
+    },
+  };
+});
 
 const MEASURE_MODE_UNDEFINED = 0;
 const MEASURE_MODE_AT_MOST = 2;
@@ -234,5 +248,118 @@ describe('measureText', () => {
     expect(() => measureText('a'.repeat(1_048_577), style, writer)).toThrow(
       'ngpdf: text longer than 1 MB',
     );
+  });
+});
+
+describe('text cache', () => {
+  const text = 'alpha  beta\ngamma delta';
+
+  /** 5pt per character, recording every `widthOf` call as "font size text". */
+  function countingMetrics(): FontMetrics & { readonly calls: string[] } {
+    const calls: string[] = [];
+    return {
+      widthOf: (chunk, font, size) => {
+        calls.push(`${font} ${String(size)} ${chunk}`);
+        return 5 * chunk.length;
+      },
+      ascent: () => 0,
+      calls,
+    };
+  }
+
+  it('lays a text out once per width and returns the same block again', () => {
+    const metrics = countingMetrics();
+    const cache = createTextCache();
+    const first = layoutText(text, style, 40, metrics, undefined, cache);
+    const measured = metrics.calls.length;
+    expect(layoutText(text, style, 40, metrics, undefined, cache)).toBe(first);
+    expect(metrics.calls).toHaveLength(measured);
+  });
+
+  it('collapses the whitespace and finds the breaks of a text once per cache', () => {
+    const metrics = countingMetrics();
+    const cache = createTextCache();
+    breakers.created = 0;
+    for (const width of [40, 60, 80, Infinity]) {
+      layoutText(text, style, width, metrics, undefined, cache);
+    }
+    expect(breakers.created).toBe(1);
+  });
+
+  it('measures each string once per font and size, across widths and texts', () => {
+    const metrics = countingMetrics();
+    const cache = createTextCache();
+    for (const width of [40, 60, Infinity]) {
+      layoutText(text, style, width, metrics, undefined, cache);
+      layoutText('delta gamma beta', style, width, metrics, undefined, cache);
+    }
+    expect(metrics.calls.length).toBeGreaterThan(0);
+    expect(new Set(metrics.calls).size).toBe(metrics.calls.length);
+  });
+
+  it('keeps widths of different fonts and sizes apart', () => {
+    const cache = createTextCache();
+    const bold: TextStyle = { ...style, fontWeight: 'bold' };
+    const larger: TextStyle = { ...style, fontSize: 12 };
+    const taller: TextStyle = { ...style, lineHeight: 2 };
+    const metrics: FontMetrics = {
+      widthOf: (chunk, font, size) => chunk.length * size * (font === 'Helvetica-Bold' ? 0.7 : 0.5),
+      ascent: () => 0,
+    };
+    for (const variant of [style, bold, larger, taller, style]) {
+      for (const width of [30, 45, Infinity]) {
+        expect(layoutText(text, variant, width, metrics, undefined, cache)).toEqual(
+          layoutText(text, variant, width, metrics),
+        );
+      }
+    }
+  });
+
+  it('gives the same lines as an uncached layout with real font metrics', async () => {
+    const writer = await createPdfkitWriter({ compress: false });
+    const cache = createTextCache();
+    const name =
+      'Gabriela Teixeira de Albuquerque Cavalcanti, pessoa140@empresa-muito-longa.com.br';
+    for (const width of [20, 60, 120, 200, Infinity, 60]) {
+      expect(layoutText(name, style, width, writer, undefined, cache)).toEqual(
+        layoutText(name, style, width, writer),
+      );
+    }
+  });
+
+  it('reports the replaced characters on every layout, cached or not', () => {
+    const cache = createTextCache();
+    const warn = vi.fn();
+    layoutText('a\u{1F600}b', style, 500, kerningMetrics, warn, cache);
+    layoutText('a\u{1F600}b', style, 500, kerningMetrics, warn, cache);
+    expect(warn.mock.calls).toEqual([[['\u{1F600}']], [['\u{1F600}']]]);
+  });
+
+  it('hands out cached blocks frozen, so no reader can change them for the next', () => {
+    const block = layoutText(text, style, 40, kerningMetrics, undefined, createTextCache());
+    expect(Object.isFrozen(block)).toBe(true);
+    expect(Object.isFrozen(block.lines)).toBe(true);
+    expect(block.lines.every((line) => Object.isFrozen(line))).toBe(true);
+  });
+
+  it('lets a measure function and the final layout at the same width share the work', () => {
+    const metrics = countingMetrics();
+    const cache = createTextCache();
+    const measure = measureText(text, style, metrics, cache);
+    measure(40, MEASURE_MODE_AT_MOST);
+    measure(40, MEASURE_MODE_AT_MOST);
+    measure(0, MEASURE_MODE_UNDEFINED);
+    const measured = metrics.calls.length;
+    layoutText(text, style, 40, metrics, undefined, cache);
+    layoutText(text, style, Infinity, metrics, undefined, cache);
+    expect(metrics.calls).toHaveLength(measured);
+  });
+
+  it('shares nothing between two caches', () => {
+    const metrics = countingMetrics();
+    layoutText(text, style, 40, metrics, undefined, createTextCache());
+    const once = [...metrics.calls];
+    layoutText(text, style, 40, metrics, undefined, createTextCache());
+    expect(metrics.calls).toEqual([...once, ...once]);
   });
 });

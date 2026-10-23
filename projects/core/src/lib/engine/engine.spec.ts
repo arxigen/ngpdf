@@ -106,6 +106,33 @@ describe('renderDocument', () => {
     expect(labels).toEqual(['1/2', '2/2']);
   });
 
+  it('measures each string once per render, and all of them again in the next render', async () => {
+    const calls: string[] = [];
+    const writer = recordingWriter();
+    writer.widthOf = (t, f, s) => {
+      calls.push(`${f} ${String(s)} ${t}`);
+      return real.widthOf(t, f, s);
+    };
+    const cell = (content: string): PdfNode => el('pdf-cell', {}, [text(content)]);
+    const rows = [1, 2, 3].map((i) =>
+      el('pdf-row', {}, [cell(`Name ${String(i)}`), cell('a longer text that wraps in its cell')]),
+    );
+    const table = el('pdf-table', {}, rows, { columns: ['1fr', 80] });
+    const name = 'Gabriela Teixeira de Albuquerque';
+    const first = el('pdf-page', {}, [text(name), table], { size: 'A4' });
+    // Each pdf-page is laid out on its own; the render's cache spans them.
+    const second = el('pdf-page', {}, [text(name)], { size: 'A4' });
+    const document = host({}, [first, second]);
+
+    await renderDocument(document, { writer, dev: false });
+    const once = calls.splice(0);
+    expect(once.length).toBeGreaterThan(0);
+    expect(new Set(once).size).toBe(once.length);
+
+    await renderDocument(document, { writer, dev: false });
+    expect(calls).toEqual(once);
+  });
+
   it('throws when the tree has no pdf-document', async () => {
     await expect(renderDocument(el('div'), { writer: recordingWriter() })).rejects.toThrow(
       'ngpdf: no pdf-document in the rendered component',
