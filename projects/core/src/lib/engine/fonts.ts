@@ -36,15 +36,20 @@ function isWinAnsi(codePoint: number): boolean {
 const isNoBreakSpace = (codePoint: number): boolean => codePoint === 0x2007 || codePoint === 0x202f;
 const isSpaceSeparator = (codePoint: number): boolean =>
   (codePoint >= 0x2000 && codePoint <= 0x200a) || codePoint === 0x202f || codePoint === 0x205f;
+// Form feed, vertical tab, next line (U+0085) and line separator (U+2028): CSS collapses them as
+// white space, so they become a space for layout to collapse. Kept, they would be drawn as `?`, and
+// U+0085 sits where WinAnsi has `…`.
+const isWhitespaceControl = (codePoint: number): boolean =>
+  codePoint === 0x0b || codePoint === 0x0c || codePoint === 0x85 || codePoint === 0x2028;
 
 // Soft hyphen and zero-width space: invisible unless a line breaks there, and v0.1 never breaks at
 // them, so they are dropped rather than drawn as a hyphen (WinAnsi 0xAD) or as `?`.
 const isInvisible = (codePoint: number): boolean => codePoint === 0xad || codePoint === 0x200b;
 
 /**
- * Maps Unicode space separators to U+0020 (or U+00A0 for the no-break ones), drops soft hyphens
- * and zero-width spaces, and replaces any other character outside WinAnsi with `?`, reporting each
- * distinct one once.
+ * Maps Unicode space separators and the white space control characters above to U+0020 (or U+00A0
+ * for the no-break spaces), drops soft hyphens and zero-width spaces, and replaces any other
+ * character outside WinAnsi with `?`, reporting each distinct one once.
  */
 export function toWinAnsi(text: string, warn: (chars: string[]) => void): string {
   const unsupported = new Set<string>();
@@ -52,7 +57,9 @@ export function toWinAnsi(text: string, warn: (chars: string[]) => void): string
   for (const char of text) {
     const codePoint = char.codePointAt(0) ?? 0;
     if (isInvisible(codePoint)) continue;
-    if (isSpaceSeparator(codePoint)) {
+    if (isWhitespaceControl(codePoint)) {
+      out += ' ';
+    } else if (isSpaceSeparator(codePoint)) {
       out += isNoBreakSpace(codePoint) ? '\u00A0' : ' ';
     } else if (isWinAnsi(codePoint)) {
       out += char;

@@ -35,7 +35,6 @@ it does not affect a correct document. Items that change behaviour need a design
   fonts plug into the `PdfWriter` port.
 - **A measure cache.** `measureText` re-runs whitespace collapsing and line breaking on every Yoga
   measure call, and `widthOf` measures character by character without a cache.
-- **Control characters** (`\f`, `\v`, U+2028, U+0085) are not collapsed as whitespace.
 - More timing tests: the mid-word narrowing path under an inflating metric, and a 100,000-character
   unbreakable word at a narrow width.
 

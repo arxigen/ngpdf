@@ -56,7 +56,7 @@ The same applies to the text of `pdf-page-number`. Fonts beyond WinAnsi come wit
 
 ## Wrapping
 
-- Whitespace collapses as in CSS `white-space: normal`: runs of spaces, tabs and line breaks become one space, and the ends are trimmed. A line break in your data does not start a new line. Use one `pdf-text` per paragraph or line.
+- Whitespace collapses as in CSS `white-space: normal`: runs of spaces, tabs, line breaks, form feeds, vertical tabs, U+2028 (line separator) and U+0085 (next line) become one space, and the ends are trimmed. A line break in your data does not start a new line. Use one `pdf-text` per paragraph or line.
 - Lines wrap at Unicode line-break opportunities (UAX #14), so they break after spaces and hyphens, and not inside words.
 - A word wider than its box is broken at the box edge.
 - Widths include the font's kerning.

@@ -46,6 +46,14 @@ describe('toWinAnsi', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
+  it('turns form feed, vertical tab, U+2028 and U+0085 into a space, without warning', () => {
+    // CSS collapses them as white space; left alone they would be drawn as `?`, and U+0085 is `…`
+    // in WinAnsi.
+    const warn = vi.fn();
+    expect(toWinAnsi('a\fb\vc\u2028d\u0085e', warn)).toBe('a b c d e');
+    expect(warn).not.toHaveBeenCalled();
+  });
+
   it('turns Unicode space separators into a space, without warning', () => {
     const warn = vi.fn();
     const spaces = '           ';
