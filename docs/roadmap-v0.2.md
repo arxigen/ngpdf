@@ -75,8 +75,6 @@ it does not affect a correct document. Items that change behaviour need a design
 - **Poppler version detection.** The e2e script's Docker fallback hard-codes poppler's major
   version, and hides `apt-get` errors.
 - **The e2e Chrome can leak** when `puppeteer.launch` finishes after the script's timeout.
-- **A strike-through length test.** The underline length is pinned by a writer test; the
-  strike-through line is not.
 - Spec hygiene: some component specs destroy in the test body instead of `finally`/`afterEach`,
   a global `URL` stub and the zone.js import leak into later tests, and a few assertions use loose
   `toMatchObject`.
