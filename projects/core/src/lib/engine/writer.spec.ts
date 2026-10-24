@@ -498,6 +498,22 @@ describe('createPdfkitWriter', () => {
       expect(Number(to) - Number(from)).toBeCloseTo(width, 3);
     });
 
+    it('draws the strike-through across the whole line, half a line height below its top', async () => {
+      const width = writer.widthOf(TEXT_OP.text, 'Helvetica', 12);
+      const content = contentOf(await pdfText([{ ...TEXT_OP, opacity: 1, underline: false }]));
+      const strokes = [...content.matchAll(/^([\d.]+) ([\d.]+) m\n([\d.]+) ([\d.]+) l$/gm)];
+      expect(strokes).toHaveLength(1);
+      const [x1, y1, x2, y2] = (strokes[0] as RegExpMatchArray).slice(1).map(Number);
+      // Helvetica's line height is (ascender 718 - descender -207) / 1000 em: 11.1pt at 12pt.
+      const middle = TEXT_OP.y + ((718 + 207) / 1000) * 12 * 0.5;
+      expect(x1).toBeCloseTo(TEXT_OP.x, 3);
+      expect(x2! - x1!).toBeCloseTo(width, 3);
+      expect(y1).toBeCloseTo(middle, 3);
+      expect(y2).toBeCloseTo(middle, 3);
+      // 1pt thick at 12pt (a tenth of the size, rounded down).
+      expect(content).toMatch(/^1 w$/m);
+    });
+
     it('strokes underline and strike at the text opacity', async () => {
       const pdf = await pdfText([TEXT_OP]);
       expect(pdf).toMatch(/\/CA 0\.4\b/);
