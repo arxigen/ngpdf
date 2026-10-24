@@ -215,6 +215,32 @@ describe('renderDocument', () => {
     expect(await render()).toBe(await render());
   });
 
+  it('measures repeated text once per render, and again in the next render', async () => {
+    const writer = recordingWriter();
+    const measured: string[] = [];
+    writer.widthOf = (t, f, s) => {
+      measured.push(`${f} ${String(s)} ${t}`);
+      return real.widthOf(t, f, s);
+    };
+    // The same words on every row and on both pages.
+    const page = (): PdfNode =>
+      el(
+        'pdf-page',
+        {},
+        [0, 1, 2, 3].map(() => text('Same words on every row')),
+        {
+          size: 'A4',
+        },
+      );
+    const tree = (): PdfNode => host({}, [page(), page()]);
+
+    await renderDocument(tree(), { writer, dev: false });
+    const first = measured.length;
+    expect(new Set(measured).size).toBe(first);
+    await renderDocument(tree(), { writer, dev: false });
+    expect(measured.length).toBe(first * 2);
+  });
+
   describe('style fidelity', () => {
     /** The body of an uncompressed PDF drawn by the real writer from one A4 page. */
     async function bodyOf(children: PdfNode[]): Promise<string> {

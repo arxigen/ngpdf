@@ -70,7 +70,6 @@ These items are in the [v0.2 roadmap](https://github.com/ngpdf/ngpdf/blob/main/d
 ### Text
 
 - Custom fonts, and characters beyond WinAnsi.
-- Faster text measuring with a measure cache.
 - Control characters such as `\f`, `\v`, U+2028 and U+0085 collapsed as whitespace.
 
 ### Images

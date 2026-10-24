@@ -3,7 +3,7 @@ import { createNode, propsOf, textContent, type PdfNode } from '../tree/node';
 import type { TableColumn } from '../tree/table-column';
 import type { ImageAsset } from './images';
 import { anonymousTextStyle, type Edges, type Length, type ResolvedStyle } from './style';
-import { layoutText, measureText, type TextBlock } from './text';
+import { layoutText, measureText, TextMeasureCache, type TextBlock } from './text';
 import type { FontMetrics } from './writer';
 
 export interface Box {
@@ -33,6 +33,8 @@ export interface LayoutContext {
   readonly warn?: (message: string) => void;
   /** Characters outside WinAnsi found in laid-out text; the caller merges them into one warning. */
   readonly warnChars?: (chars: string[]) => void;
+  /** Text measuring reused across one render's layouts; without it, each `layoutBox` makes its own. */
+  readonly textCache?: TextMeasureCache;
 }
 
 type Measure = (width: number, widthMode: number) => { width: number; height: number };
@@ -339,6 +341,7 @@ export function layoutBox(
   ctx: LayoutContext,
 ): Box {
   const { yoga } = ctx;
+  const textCache = ctx.textCache ?? new TextMeasureCache();
   const config = yoga.Config.create();
   config.setPointScaleFactor(0);
   const measures = new Map<PdfNode, Measure>();
@@ -360,17 +363,10 @@ export function layoutBox(
   const measureOf = (textNode: PdfNode, style: ResolvedStyle): Measure => {
     let measure = measures.get(textNode);
     if (!measure) {
-      const inner = measureText(textContent(textNode), style, ctx.metrics);
-      const cache = new Map<number, { width: number; height: number }>();
+      const inner = measureText(textContent(textNode), style, ctx.metrics, textCache);
       measure = (available, mode) => {
-        const key = mode === 0 ? Infinity : available;
-        let size = cache.get(key);
-        if (!size) {
-          const measured = inner(available, mode);
-          size = { width: measured.width + WIDTH_SLACK, height: measured.height };
-          cache.set(key, size);
-        }
-        return size;
+        const measured = inner(available, mode);
+        return { width: measured.width + WIDTH_SLACK, height: measured.height };
       };
       measures.set(textNode, measure);
     }
@@ -492,6 +488,7 @@ export function layoutBox(
               contentWidthOf(yogaNode),
               ctx.metrics,
               ctx.warnChars,
+              textCache,
             ),
           }
         : {}),

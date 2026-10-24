@@ -1,7 +1,7 @@
 import LineBreaker from 'linebreak';
 import { fontFor, toWinAnsi } from './fonts';
 import type { TextStyle } from './style';
-import type { FontMetrics } from './writer';
+import type { FontMetrics, StandardFont } from './writer';
 
 export interface TextLine {
   readonly text: string;
@@ -24,6 +24,58 @@ const KERNING_SLACK = 1.25;
 
 function assertTextSize(text: string): void {
   if (text.length > MAX_TEXT_LENGTH) throw new Error('ngpdf: text longer than 1 MB');
+}
+
+interface CachedBlock {
+  readonly block: TextBlock;
+  /** Characters replaced by `?`, reported again each time the block is used. */
+  readonly replaced: readonly string[];
+}
+
+/**
+ * Text measuring reused within one render. `renderDocument` creates one and passes it down in
+ * `LayoutContext`, as it does `metrics` and `images`, so renders share nothing. Its contents are
+ * private: callers can only create one and hand it to `layoutText` and `measureText`.
+ */
+export class TextMeasureCache {
+  /** Laid-out blocks, by text, then by font, size, line height and width. */
+  readonly #blocks = new Map<string, Map<string, CachedBlock>>();
+  /** Drawn widths, by font and size, then by string. */
+  readonly #widths = new Map<string, Map<string, number>>();
+
+  /** The block for `text` under `key`, made with `make` the first time. */
+  block(text: string, key: string, make: () => CachedBlock): CachedBlock {
+    let byKey = this.#blocks.get(text);
+    if (!byKey) {
+      byKey = new Map();
+      this.#blocks.set(text, byKey);
+    }
+    let cached = byKey.get(key);
+    if (!cached) {
+      cached = make();
+      byKey.set(key, cached);
+    }
+    return cached;
+  }
+
+  /** `metrics.widthOf` for one font and size, remembering every string it measures. */
+  widthOf(metrics: FontMetrics, font: StandardFont, size: number): (chunk: string) => number {
+    const fontKey = `${font} ${String(size)}`;
+    let widths = this.#widths.get(fontKey);
+    if (!widths) {
+      widths = new Map();
+      this.#widths.set(fontKey, widths);
+    }
+    const known = widths;
+    return (chunk) => {
+      let width = known.get(chunk);
+      if (width === undefined) {
+        width = metrics.widthOf(chunk, font, size);
+        known.set(chunk, width);
+      }
+      return width;
+    };
+  }
 }
 
 /** CSS `white-space: normal`: runs of space, tab and line breaks become one space; ends trimmed. */
@@ -74,26 +126,38 @@ export function layoutText(
   maxWidth: number,
   metrics: FontMetrics,
   warn: (chars: string[]) => void = () => undefined,
+  cache: TextMeasureCache = new TextMeasureCache(),
 ): TextBlock {
   assertTextSize(text);
-  const collapsed = collapseWhitespace(toWinAnsi(text, warn));
   const font = fontFor(style);
   const size = style.fontSize;
-  const lineHeight = size * style.lineHeight;
-  const widthOf = (chunk: string): number => metrics.widthOf(chunk, font, size);
+  const key = `${font} ${String(size)} ${String(style.lineHeight)} ${String(maxWidth)}`;
+  const { block, replaced } = cache.block(text, key, () => {
+    let replaced: readonly string[] = [];
+    const collapsed = collapseWhitespace(
+      toWinAnsi(text, (chars) => {
+        replaced = chars;
+      }),
+    );
+    const widthOf = cache.widthOf(metrics, font, size);
+    return { block: breakLines(collapsed, size * style.lineHeight, maxWidth, widthOf), replaced };
+  });
+  if (replaced.length > 0) warn([...replaced]);
+  return block;
+}
 
+/** The lines of `collapsed` in `maxWidth`; see `layoutText`. */
+function breakLines(
+  collapsed: string,
+  lineHeight: number,
+  maxWidth: number,
+  widthOf: (chunk: string) => number,
+): TextBlock {
   const length = collapsed.length;
   // prefix[i] is the summed width of the first i characters (all single UTF-16 units after WinAnsi).
   const prefix = new Float64Array(length + 1);
-  const charWidths = new Map<string, number>();
   for (let i = 0; i < length; i++) {
-    const char = collapsed.charAt(i);
-    let charWidth = charWidths.get(char);
-    if (charWidth === undefined) {
-      charWidth = widthOf(char);
-      charWidths.set(char, charWidth);
-    }
-    prefix[i + 1] = (prefix[i] ?? 0) + charWidth;
+    prefix[i + 1] = (prefix[i] ?? 0) + widthOf(collapsed.charAt(i));
   }
   const breaks = length === 0 ? [] : breakPositions(collapsed);
 
@@ -164,11 +228,19 @@ export function measureText(
   text: string,
   style: TextStyle,
   metrics: FontMetrics,
+  cache: TextMeasureCache = new TextMeasureCache(),
 ): (width: number, widthMode: number) => { width: number; height: number } {
   assertTextSize(text);
   return (width, widthMode) => {
     const maxWidth = widthMode === MEASURE_MODE_UNDEFINED ? Infinity : width;
-    const { width: blockWidth, height } = layoutText(text, style, maxWidth, metrics);
+    const { width: blockWidth, height } = layoutText(
+      text,
+      style,
+      maxWidth,
+      metrics,
+      undefined,
+      cache,
+    );
     return { width: blockWidth, height };
   };
 }

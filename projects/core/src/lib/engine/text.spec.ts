@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { ROOT_TEXT_STYLE, type TextStyle } from './style';
-import { layoutText, measureText } from './text';
+import { layoutText, measureText, TextMeasureCache } from './text';
 import { createPdfkitWriter, type FontMetrics, type PdfWriter } from './writer';
 
 const MEASURE_MODE_UNDEFINED = 0;
@@ -234,5 +234,82 @@ describe('measureText', () => {
     expect(() => measureText('a'.repeat(1_048_577), style, writer)).toThrow(
       'ngpdf: text longer than 1 MB',
     );
+  });
+});
+
+describe('TextMeasureCache', () => {
+  /** Real widths, with every call counted. */
+  function countingMetrics(writer: PdfWriter): FontMetrics & { calls: number } {
+    const counted = {
+      calls: 0,
+      widthOf: (chunk: string, font: Parameters<FontMetrics['widthOf']>[1], size: number) => {
+        counted.calls++;
+        return writer.widthOf(chunk, font, size);
+      },
+      ascent: (font: Parameters<FontMetrics['ascent']>[0], size: number) =>
+        writer.ascent(font, size),
+    };
+    return counted;
+  }
+
+  let writer: PdfWriter;
+  beforeAll(async () => {
+    writer = await createPdfkitWriter({ compress: false });
+  });
+  const text = 'Gabriela Teixeira de Albuquerque Cavalcanti';
+
+  it('lays out the same text at the same width once, and returns the same block', () => {
+    const metrics = countingMetrics(writer);
+    const cache = new TextMeasureCache();
+    const first = layoutText(text, style, 120, metrics, undefined, cache);
+    const calls = metrics.calls;
+    expect(layoutText(text, style, 120, metrics, undefined, cache)).toBe(first);
+    expect(metrics.calls).toBe(calls);
+    // Without a shared cache the work is done again.
+    layoutText(text, style, 120, metrics);
+    expect(metrics.calls).toBeGreaterThan(calls);
+  });
+
+  it('measures each string once per font and size, across widths', () => {
+    const metrics = countingMetrics(writer);
+    const cache = new TextMeasureCache();
+    const measure = measureText(text, style, metrics, cache);
+    measure(120, MEASURE_MODE_AT_MOST);
+    const calls = metrics.calls;
+    // A narrower width breaks the same words again: only new candidate lines are measured.
+    measure(80, MEASURE_MODE_AT_MOST);
+    const narrower = metrics.calls - calls;
+    measure(80, MEASURE_MODE_AT_MOST);
+    expect(metrics.calls - calls).toBe(narrower);
+    const fresh = countingMetrics(writer);
+    measureText(text, style, fresh)(80, MEASURE_MODE_AT_MOST);
+    expect(narrower).toBeLessThan(fresh.calls);
+  });
+
+  it('keeps widths, fonts, sizes and line heights apart, and matches an uncached layout', () => {
+    const cache = new TextMeasureCache();
+    const variants: [TextStyle, number][] = [
+      [style, 120],
+      [style, 80],
+      [{ ...style, fontFamily: 'Courier' }, 120],
+      [{ ...style, fontSize: 12 }, 120],
+      [{ ...style, lineHeight: 2 }, 120],
+    ];
+    for (const [variant, width] of variants) {
+      expect(layoutText(text, variant, width, writer, undefined, cache)).toEqual(
+        layoutText(text, variant, width, writer),
+      );
+    }
+  });
+
+  it('reports replaced characters every time a cached block is used', () => {
+    const cache = new TextMeasureCache();
+    // Measuring has no warning sink; the final layout of the same text and width must still warn.
+    measureText('Olá 漢', style, writer, cache)(Infinity, MEASURE_MODE_UNDEFINED);
+    const warn = vi.fn();
+    layoutText('Olá 漢', style, Infinity, writer, warn, cache);
+    layoutText('Olá 漢', style, Infinity, writer, warn, cache);
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(warn).toHaveBeenCalledWith(['漢']);
   });
 });
