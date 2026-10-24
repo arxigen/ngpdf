@@ -51,8 +51,6 @@ it does not affect a correct document. Items that change behaviour need a design
 
 ## Robustness
 
-- **The style attribute parser** splits on `;`, which cuts values that contain one (a quoted
-  string, a data URL).
 - **Keyword case.** `text-align: CENTER` throws and `font-weight: BOLD` falls back to normal;
   keywords should be matched case-insensitively and trimmed, with one policy for unknown
   keywords (fallback or throw).
