@@ -90,6 +90,24 @@ describe('loadImages', () => {
     const plainData = (await loadImages(root(plain), writer)).get(plain)?.data;
     expect(plainData).toEqual(png);
     expect(plainData?.buffer.byteLength).toBe(text.length);
+
+    // Exactly half the buffer used: every escape adds two characters, so escaping half the bytes
+    // makes the text twice their length. At the threshold the view is kept.
+    const even = new Uint8Array([...png, 0x41]);
+    let escapes = even.filter((b) => b === 0x25).length;
+    const half = Array.from(even, (b) => {
+      if (b === 0x25) return '%25';
+      if (escapes < even.length / 2) {
+        escapes++;
+        return `%${b.toString(16).padStart(2, '0')}`;
+      }
+      return String.fromCharCode(b);
+    }).join('');
+    expect(half.length).toBe(even.length * 2);
+    const boundary = imageNode(`data:image/png,${half}`);
+    const boundaryData = (await loadImages(root(boundary), writer)).get(boundary)?.data;
+    expect(boundaryData).toEqual(even);
+    expect(boundaryData?.buffer.byteLength).toBe(half.length);
   });
 
   it('rejects a data URL without a comma', async () => {
@@ -125,7 +143,11 @@ describe('loadImages', () => {
     // About 90 ms on a developer machine. As with the text budget, the margin only has to separate
     // a linear decode on a busy CI runner with coverage on from a quadratic one.
     expect(performance.now() - started).toBeLessThan(2000);
-    expect(assets.get(node)).toEqual({ data: bytes, width: 640, height: 480 });
+    const asset = assets.get(node);
+    expect([asset?.width, asset?.height]).toEqual([640, 480]);
+    // A plain loop: `toEqual` walks a 300 KB typed array slowly enough to hit the test timeout.
+    expect(asset?.data.length).toBe(bytes.length);
+    expect(asset?.data.every((byte, i) => byte === bytes[i])).toBe(true);
   });
 
   it('loads a Blob and an ArrayBuffer the same way', async () => {
