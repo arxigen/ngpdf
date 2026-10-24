@@ -25,7 +25,10 @@ this project calls for it. Where the simplest correct answer is no pattern, this
 **Architecture pattern: pipes and filters, with a functional core and an imperative shell.**
 
 - Each stage is a function from the previous stage's output to a new value.
-- A stage does not mutate its input, keeps no state between calls, and does no I/O.
+- A stage does not mutate its input, keeps no state between calls, and does no I/O. The one
+  exception is the per-render text cache in `LayoutContext.textCache`, which `renderDocument`
+  creates: a stage may write to that cache and nothing else, and its entries come only from that
+  render's inputs.
 - The I/O sits at the edges, in the imperative shell:
   - Angular's change detection at the start;
   - fetching images;
