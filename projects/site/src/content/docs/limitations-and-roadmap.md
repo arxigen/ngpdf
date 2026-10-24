@@ -83,7 +83,7 @@ These items are in the [v0.2 roadmap](https://github.com/ngpdf/ngpdf/blob/main/d
 ### Robustness
 
 - A style parser that keeps values containing `;`.
-- One policy for unknown keywords: `font-weight` and `font-style` fall back to `normal`, other keywords throw.
+- One policy for unknown keywords: `font-weight` and `font-style` fall back to `normal`, `break-before` ignores them, and the other keyword properties throw.
 - `thin`, `medium` and `thick` border widths, and negative border widths rejected.
 
 Ideas and bug reports are welcome on [GitHub issues](https://github.com/ngpdf/ngpdf/issues).
