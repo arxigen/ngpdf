@@ -74,6 +74,24 @@ describe('loadImages', () => {
     expect(assets.get(node)?.width).toBe(200);
   });
 
+  it('keeps no more memory than the decoded bytes when escapes leave most of the buffer unused', async () => {
+    // Every byte escaped: the text is three times the bytes, so a view would hold 3x the image.
+    const escaped = imageNode(
+      `data:image/png,${Array.from(png, (b) => `%${b.toString(16).padStart(2, '0')}`).join('')}`,
+    );
+    const assets = await loadImages(root(escaped), writer);
+    const data = assets.get(escaped)?.data;
+    expect(data).toEqual(png);
+    expect(data?.buffer.byteLength).toBe(png.length);
+
+    // Bytes written as Latin-1 characters, only `%` escaped: little slack, so no copy is made.
+    const text = Array.from(png, (b) => (b === 0x25 ? '%25' : String.fromCharCode(b))).join('');
+    const plain = imageNode(`data:image/png,${text}`);
+    const plainData = (await loadImages(root(plain), writer)).get(plain)?.data;
+    expect(plainData).toEqual(png);
+    expect(plainData?.buffer.byteLength).toBe(text.length);
+  });
+
   it('rejects a data URL without a comma', async () => {
     const bad = imageNode('data:image/png;base64');
     await expect(loadImages(root(bad), writer)).rejects.toThrow(/malformed data URL/);

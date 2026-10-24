@@ -13,7 +13,9 @@ function describe(reason: unknown): string {
 
 /**
  * Percent-decodes to bytes (not UTF-8 text), leaving a stray `%` as it is. Every character gives
- * at most one byte, so the output is sized to the input and cut to the bytes written.
+ * at most one byte, so the output is sized to the input and cut to the bytes written. The asset
+ * keeps the bytes for the whole render, so when escapes leave more than half the buffer unused
+ * the bytes are copied out rather than kept as a view of it.
  */
 function percentDecode(text: string): Uint8Array {
   const bytes = new Uint8Array(text.length);
@@ -27,7 +29,7 @@ function percentDecode(text: string): Uint8Array {
       bytes[length++] = text.charCodeAt(at) & 0xff;
     }
   }
-  return bytes.subarray(0, length);
+  return length * 2 < bytes.length ? bytes.slice(0, length) : bytes.subarray(0, length);
 }
 
 function decodeDataUrl(src: string): Uint8Array {
