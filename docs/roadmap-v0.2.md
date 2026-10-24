@@ -45,7 +45,6 @@ it does not affect a correct document. Items that change behaviour need a design
 - **Cancel sibling fetches** with an `AbortController` when one image fails.
 - `percentDecode` builds a `number[]` before the byte array; decode straight into a
   `Uint8Array`.
-- An upper-case `DATA:` URL is fetched instead of decoded.
 
 ## Robustness
 

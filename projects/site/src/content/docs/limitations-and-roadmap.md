@@ -77,7 +77,6 @@ These items are in the [v0.2 roadmap](https://github.com/ngpdf/ngpdf/blob/main/d
 
 - A size cap on fetched images.
 - Cancelling the other image downloads when one fails.
-- Upper-case `DATA:` URLs decoded instead of fetched.
 
 ### Robustness
 
