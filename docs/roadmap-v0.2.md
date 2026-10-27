@@ -38,8 +38,6 @@ it does not affect a correct document. Items that change behaviour need a design
 
 - **A size cap on fetched images.** An image URL is downloaded in full, however large.
 - **Cancel sibling fetches** with an `AbortController` when one image fails.
-- `percentDecode` builds a `number[]` before the byte array; decode straight into a
-  `Uint8Array`.
 
 ## Robustness
 
@@ -47,9 +45,6 @@ it does not affect a correct document. Items that change behaviour need a design
   `text-align` and the other `oneOf` properties, falls back to `normal` for `font-weight` and
   `font-style`, and is ignored by `break-before` and `break-inside`; pick one policy (fallback or
   throw).
-- **Border widths.** `parseBorder` accepts a negative width, and takes `thin`, `medium` and
-  `thick` as colors (they now throw as invalid colors); support the keywords and reject negative
-  widths.
 - The renderer factory applies `toKebab` to attribute names: an upper-case `STYLE` attribute
   would not be recognised. Lower-case attribute names instead.
 - Missing renderer edge tests: `--custom` properties, `!important`, `insertBefore` with a
