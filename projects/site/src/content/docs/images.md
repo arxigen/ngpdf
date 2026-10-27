@@ -61,7 +61,7 @@ export function toImageSource(bytes: Uint8Array): ArrayBuffer {
 }
 ```
 
-The `data:` prefix is matched in lower case only. An upper-case `DATA:` URL is passed to `fetch` instead.
+The `data:` prefix and its `;base64` marker are matched in any case, so `DATA:image/png;BASE64,…` is decoded in place too.
 
 ## Fetching URLs
 
@@ -90,7 +90,7 @@ The image keeps its aspect ratio unless you give it both dimensions.
 | `height` only | the width follows the aspect ratio |
 | `width` and `height` | the box you set; `object-fit` places the image in it |
 
-A JPEG with an EXIF orientation, as phone photos usually have, is drawn turned the way browsers show it, and its size and aspect ratio are those of the turned picture: a photo stored 4000x3000 with a quarter-turn orientation (5 to 8) is 3000 wide and 4000 high. The orientation is read from the first Exif APP1 segment before the image data, which is where cameras write it, so an XMP segment or a comment in front of it does not hide it. Its value is read as the 16-bit number the EXIF standard specifies; a value outside 1 to 8 is ignored.
+A JPEG with an EXIF orientation, as phone photos usually have, is drawn turned the way browsers show it, and its size and aspect ratio are those of the turned picture: a photo stored 4000x3000 with a quarter-turn orientation (5 to 8) is 3000 wide and 4000 high. The orientation is read from the first Exif APP1 segment before the image data, which is where cameras write it, so an XMP segment or a comment in front of it does not hide it. Its value is read as a 16-bit number, because that is how pdfkit reads it; a value outside 1 to 8 is ignored.
 
 A 2x image (for example a canvas captured at twice the screen size) therefore comes out twice as large as on screen. Set a `width` to scale it.
 
@@ -107,5 +107,5 @@ The image is drawn inside the content box, so padding and borders on a `pdf-imag
 
 ## Things to avoid
 
-- Do not put children inside `pdf-image`. They are not supported and can make the render fail.
+- Do not put elements inside `pdf-image`. The render rejects with `ngpdf: pdf-image cannot have children`, naming the first one, before any image is fetched. Text inside it is ignored.
 - Do not rely on `src` changing after the render starts. The component is rendered once.
