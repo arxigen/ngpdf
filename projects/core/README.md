@@ -82,9 +82,8 @@ The header row repeats on every page, rows are never split, and the text stays s
 
 ## v0.1 limits
 
-- Standard PDF fonts only (WinAnsi). A character outside it is drawn as `?`, with a warning in
-  development mode.
-- `pdf-page-number` always sits at the bottom of the content area.
+- In the standard PDF fonts, WinAnsi only: a character outside it is drawn as `?`, with a warning
+  in development mode. Register your own fonts with `providePdfFonts` for anything else.
 - Inside a `pdf-table`, horizontal padding, borders and margins on a row are ignored. Put
   horizontal padding on the `pdf-cell`s.
 - A unit taller than a page (a row, or a `pdf-view` in a column) is clipped to its page.

@@ -11,8 +11,8 @@ ngpdf v0.1 covers documents built from text, tables, boxes and images. This page
 
 ### Text and fonts
 
-- Only the standard PDF fonts (Helvetica, Times and Courier), with the WinAnsi encoding. A character outside it is drawn as `?`, with a warning in development mode.
-- A `pdf-text` inside a `pdf-text` is flattened to its text, so one bold word inside a sentence is not possible.
+- In the standard PDF fonts (Helvetica, Times and Courier), only WinAnsi characters: any other is drawn as `?`, with a warning in development mode. [Custom fonts](/docs/text-and-fonts#custom-fonts) have no such limit.
+- No font collections (`.ttc`), no color emoji fonts, and no kerning across two fonts in one line.
 - Text sits at the top of its line box: extra `line-height` goes below the text, not half above and half below as in CSS.
 - A bare number is in points, except in `line-height`, where it multiplies the font size as in CSS (`line-height: 1.4`). Write `line-height: 14pt` for points.
 - Bare text inside an element other than `pdf-text` (`<pdf-cell>{{ x }}</pdf-cell>`) is laid out as an anonymous `pdf-text` with its parent's text styles.
@@ -25,7 +25,7 @@ ngpdf v0.1 covers documents built from text, tables, boxes and images. This page
 - `opacity` multiplies down the tree: a faded view's children are each faded, not composited as one group, so overlapping children show through each other.
 - A box cannot fill the remaining height of a page. Use a fixed height.
 - Your own components inside a document are transparent, like `display: contents`. Styles on a component's host element are ignored with a warning. Style a `pdf-*` element inside it instead. The same goes for the document component you render.
-- Keywords are case-sensitive, and a style value cannot contain `;`.
+- Keywords are case-sensitive.
 
 ### Tables
 
@@ -35,8 +35,7 @@ ngpdf v0.1 covers documents built from text, tables, boxes and images. This page
 
 ### Pagination
 
-- `pdf-page-number` always sits at the bottom of the content area.
-- A unit taller than a page (a row, a `pdf-text`, or a `pdf-view` in a column) is clipped to its page. A text block is never split across pages.
+- A unit taller than a page (a row, or a `pdf-view` in a column) is clipped to its page. So is a `pdf-text` that stays one unit: one inside a row, or one with `break-inside: avoid`, a fixed `height` or `max-height`, or fewer than `orphans + widows` lines. Other text breaks between lines instead.
 
 ### Images
 
@@ -46,7 +45,6 @@ ngpdf v0.1 covers documents built from text, tables, boxes and images. This page
 ### Not in v0.1
 
 - Server rendering. Render in the browser.
-- Custom fonts.
 - SVG, links and bookmarks.
 - Forms and encryption.
 - A preview component.
@@ -61,28 +59,21 @@ These items are in the [v0.2 roadmap](https://github.com/ngpdf/ngpdf/blob/main/d
 - Fill the remaining page height.
 - Group opacity, so a faded view is composited as one.
 - Half-leading: extra line height split above and below the text, as in CSS.
-- Styles on nested `pdf-text`, for inline runs such as one bold word.
 - Content-sized table columns (`auto`).
-- A positioned page number.
 - Rounded borders that follow `border-radius`.
 - Table headers: a warning or a fix when a header is dropped or too tall to repeat, and `breakBefore` kept on header rows.
 
 ### Text
 
-- Custom fonts, and characters beyond WinAnsi.
-- Faster text measuring with a measure cache.
 - Control characters such as `\f`, `\v`, U+2028 and U+0085 collapsed as whitespace.
 
 ### Images
 
 - A size cap on fetched images.
 - Cancelling the other image downloads when one fails.
-- Upper-case `DATA:` URLs decoded instead of fetched.
-- A clear `ngpdf:` error for a `pdf-image` with children.
 
 ### Robustness
 
-- A style parser that keeps values containing `;`.
 - Keywords matched case-insensitively, with one policy for unknown keywords.
 - `thin`, `medium` and `thick` border widths, and negative border widths rejected.
 

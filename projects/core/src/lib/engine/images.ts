@@ -7,7 +7,7 @@ export interface ImageAsset {
   readonly height: number;
 }
 
-function describe(reason: unknown): string {
+export function describeError(reason: unknown): string {
   return reason instanceof Error ? reason.message : String(reason);
 }
 
@@ -29,7 +29,8 @@ function percentDecode(text: string): Uint8Array {
       bytes[length++] = text.charCodeAt(at) & 0xff;
     }
   }
-  return length * 2 < bytes.length ? bytes.slice(0, length) : bytes.subarray(0, length);
+  // A copy, so the oversized buffer (escapes make the text longer than the bytes) can be freed.
+  return bytes.slice(0, length);
 }
 
 function decodeDataUrl(src: string): Uint8Array {
@@ -55,36 +56,42 @@ async function fetchBytes(url: string, fetchFn: typeof fetch): Promise<Uint8Arra
   return new Uint8Array(await response.arrayBuffer());
 }
 
+/** Where a source's bytes come from: a label for messages and a reader. Undefined for other types. */
+export function readSource(
+  src: unknown,
+  fetchFn: typeof fetch | undefined,
+): { label: string; read: () => Promise<Uint8Array> | Uint8Array } | undefined {
+  // URL schemes are case-insensitive, so `DATA:` and `Data:` are data URLs too.
+  if (typeof src === 'string' && src.slice(0, 5).toLowerCase() === 'data:') {
+    return { label: 'data URL', read: () => decodeDataUrl(src) };
+  }
+  if (typeof src === 'string') {
+    return {
+      label: withoutQuery(src),
+      read: () => fetchBytes(src, fetchFn ?? ((...args) => fetch(...args))),
+    };
+  }
+  if (src instanceof Blob) {
+    return { label: 'Blob', read: async () => new Uint8Array(await src.arrayBuffer()) };
+  }
+  if (src instanceof ArrayBuffer) return { label: 'ArrayBuffer', read: () => new Uint8Array(src) };
+  if (src instanceof Uint8Array) return { label: 'Uint8Array', read: () => src };
+  return undefined;
+}
+
 async function loadOne(
   src: unknown,
   writer: Pick<PdfWriter, 'imageSize'>,
   fetchFn: typeof fetch | undefined,
 ): Promise<ImageAsset> {
-  let label: string;
-  let read: () => Promise<Uint8Array> | Uint8Array;
-  if (typeof src === 'string' && src.startsWith('data:')) {
-    label = 'data URL';
-    read = () => decodeDataUrl(src);
-  } else if (typeof src === 'string') {
-    label = withoutQuery(src);
-    read = () => fetchBytes(src, fetchFn ?? ((...args) => fetch(...args)));
-  } else if (src instanceof Blob) {
-    label = 'Blob';
-    read = async () => new Uint8Array(await src.arrayBuffer());
-  } else if (src instanceof ArrayBuffer) {
-    label = 'ArrayBuffer';
-    read = () => new Uint8Array(src);
-  } else {
-    label = typeof src;
-    read = () => {
-      throw new Error('src must be a string, Blob or ArrayBuffer');
-    };
-  }
+  const source = src instanceof Uint8Array ? undefined : readSource(src, fetchFn);
+  const label = source?.label ?? typeof src;
   try {
-    const data = await read();
+    if (!source) throw new Error('src must be a string, Blob or ArrayBuffer');
+    const data = await source.read();
     return { data, ...writer.imageSize(data) };
   } catch (error) {
-    throw new Error(`ngpdf: could not load image "${label}": ${describe(error)}`, {
+    throw new Error(`ngpdf: could not load image "${label}": ${describeError(error)}`, {
       cause: error,
     });
   }

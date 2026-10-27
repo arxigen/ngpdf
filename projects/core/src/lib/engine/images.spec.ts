@@ -67,6 +67,17 @@ describe('loadImages', () => {
     expect(assets.get(node)).toEqual({ data: png, width: 200, height: 100 });
   });
 
+  it.each(['DATA:image/png;BASE64,', 'Data:image/png;Base64,'])(
+    'decodes a %s data URL without fetching it, as URL schemes are case-insensitive',
+    async (prefix) => {
+      const fetchFn = vi.fn(() => Promise.reject(new TypeError('Failed to fetch')));
+      const node = imageNode(`${prefix}${base64(png)}`);
+      const assets = await loadImages(root(node), writer, fetchFn);
+      expect(fetchFn).not.toHaveBeenCalled();
+      expect(assets.get(node)).toEqual({ data: png, width: 200, height: 100 });
+    },
+  );
+
   it('decodes a percent-encoded data URL', async () => {
     const encoded = Array.from(png, (b) => `%${b.toString(16).padStart(2, '0')}`).join('');
     const node = imageNode(`data:image/png,${encoded}`);
@@ -74,40 +85,16 @@ describe('loadImages', () => {
     expect(assets.get(node)?.width).toBe(200);
   });
 
-  it('keeps no more memory than the decoded bytes when escapes leave most of the buffer unused', async () => {
-    // Every byte escaped: the text is three times the bytes, so a view would hold 3x the image.
+  it('decodes fully escaped and mostly plain percent-encoded data URLs to the same bytes', async () => {
     const escaped = imageNode(
       `data:image/png,${Array.from(png, (b) => `%${b.toString(16).padStart(2, '0')}`).join('')}`,
     );
-    const assets = await loadImages(root(escaped), writer);
-    const data = assets.get(escaped)?.data;
-    expect(data).toEqual(png);
-    expect(data?.buffer.byteLength).toBe(png.length);
+    expect((await loadImages(root(escaped), writer)).get(escaped)?.data).toEqual(png);
 
-    // Bytes written as Latin-1 characters, only `%` escaped: little slack, so no copy is made.
+    // Bytes written as Latin-1 characters, only `%` escaped.
     const text = Array.from(png, (b) => (b === 0x25 ? '%25' : String.fromCharCode(b))).join('');
     const plain = imageNode(`data:image/png,${text}`);
-    const plainData = (await loadImages(root(plain), writer)).get(plain)?.data;
-    expect(plainData).toEqual(png);
-    expect(plainData?.buffer.byteLength).toBe(text.length);
-
-    // Exactly half the buffer used: every escape adds two characters, so escaping half the bytes
-    // makes the text twice their length. At the threshold the view is kept.
-    const even = new Uint8Array([...png, 0x41]);
-    let escapes = even.filter((b) => b === 0x25).length;
-    const half = Array.from(even, (b) => {
-      if (b === 0x25) return '%25';
-      if (escapes < even.length / 2) {
-        escapes++;
-        return `%${b.toString(16).padStart(2, '0')}`;
-      }
-      return String.fromCharCode(b);
-    }).join('');
-    expect(half.length).toBe(even.length * 2);
-    const boundary = imageNode(`data:image/png,${half}`);
-    const boundaryData = (await loadImages(root(boundary), writer)).get(boundary)?.data;
-    expect(boundaryData).toEqual(even);
-    expect(boundaryData?.buffer.byteLength).toBe(half.length);
+    expect((await loadImages(root(plain), writer)).get(plain)?.data).toEqual(png);
   });
 
   it('rejects a data URL without a comma', async () => {

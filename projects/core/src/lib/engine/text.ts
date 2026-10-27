@@ -1,13 +1,47 @@
 import LineBreaker from 'linebreak';
-import { fontFor, toWinAnsi } from './fonts';
+import type { Color } from './color';
+import { fontFor, normalizeText, shapeText } from './fonts';
 import type { TextStyle } from './style';
-import type { FontMetrics } from './writer';
+import type { FontMetrics, FontName } from './writer';
+
+/** A piece of a line drawn in one font, size, color and decoration. */
+export interface TextRun {
+  readonly text: string;
+  readonly font: FontName;
+  readonly size: number;
+  readonly color: Color;
+  readonly decoration: TextStyle['textDecoration'];
+  /** Offset from the start of the line. */
+  readonly x: number;
+  readonly width: number;
+  /** Height of the font above its baseline. */
+  readonly ascent: number;
+}
 
 export interface TextLine {
   readonly text: string;
   readonly width: number;
   /** Top of the line box. */
   readonly y: number;
+  /** The tallest run's font size times the paragraph's line height. */
+  readonly height: number;
+  /** The baseline, below `y`: the largest ascent of the line's runs. */
+  readonly ascent: number;
+  readonly runs: readonly TextRun[];
+}
+
+/** The fonts of a text, from `fontChain`. Without it, text is drawn in one standard font. */
+export interface TextFonts {
+  readonly chain: readonly FontName[];
+  /** Receives the characters no font in the chain has. */
+  readonly missing?: (chars: string[]) => void;
+}
+
+/** A piece of a paragraph in one text style, such as the text of a pdf-span. */
+export interface TextRange {
+  readonly text: string;
+  readonly style: TextStyle;
+  readonly fonts?: TextFonts;
 }
 
 export interface TextBlock {
@@ -22,13 +56,88 @@ const MEASURE_MODE_UNDEFINED = 0;
 // How far over `maxWidth` the summed character widths may be and still be tried by measuring.
 const KERNING_SLACK = 1.25;
 
-function assertTextSize(text: string): void {
-  if (text.length > MAX_TEXT_LENGTH) throw new Error('ngpdf: text longer than 1 MB');
+function assertTextSize(ranges: readonly TextRange[]): void {
+  let length = 0;
+  for (const range of ranges) length += range.text.length;
+  if (length > MAX_TEXT_LENGTH) throw new Error('ngpdf: text longer than 1 MB');
 }
 
-/** CSS `white-space: normal`: runs of space, tab and line breaks become one space; ends trimmed. */
-function collapseWhitespace(text: string): string {
-  return text.replace(/[ \t\r\n]+/g, ' ').trim();
+interface CachedBlock {
+  readonly block: TextBlock;
+  /** Characters replaced by `?`, reported again each time the block is used. */
+  readonly replaced: readonly string[];
+  /** Characters no font has, reported the same way. */
+  readonly missing: readonly string[];
+}
+
+/**
+ * Text measuring reused within one render. `renderDocument` creates one and passes it down in
+ * `LayoutContext`, as it does `metrics` and `images`, so renders share nothing. Its contents are
+ * private: callers can only create one and hand it to `layoutText` and `measureText`.
+ */
+export class TextMeasureCache {
+  /** Laid-out blocks, by text, then by font, size, line height and width. */
+  readonly #blocks = new Map<string, Map<string, CachedBlock>>();
+  /** Drawn widths, by font and size, then by string. */
+  readonly #widths = new Map<string, Map<string, number>>();
+
+  /** The block for `text` under `key`, made with `make` the first time. */
+  block(text: string, key: string, make: () => CachedBlock): CachedBlock {
+    let byKey = this.#blocks.get(text);
+    if (!byKey) {
+      byKey = new Map();
+      this.#blocks.set(text, byKey);
+    }
+    let cached = byKey.get(key);
+    if (!cached) {
+      cached = make();
+      byKey.set(key, cached);
+    }
+    return cached;
+  }
+
+  /** `metrics.widthOf` for one font and size, remembering every string it measures. */
+  widthOf(metrics: FontMetrics, font: FontName, size: number): (chunk: string) => number {
+    const fontKey = `${font} ${String(size)}`;
+    let widths = this.#widths.get(fontKey);
+    if (!widths) {
+      widths = new Map();
+      this.#widths.set(fontKey, widths);
+    }
+    const known = widths;
+    return (chunk) => {
+      let width = known.get(chunk);
+      if (width === undefined) {
+        width = metrics.widthOf(chunk, font, size);
+        known.set(chunk, width);
+      }
+      return width;
+    };
+  }
+}
+
+/**
+ * CSS `white-space: normal` over a paragraph split into pieces: runs of space, tab and line breaks
+ * become one space, also across pieces (the space stays in the piece where the run starts), and the
+ * ends of the whole paragraph are trimmed. Returns one string per piece.
+ */
+function collapseWhitespace(pieces: readonly string[]): string[] {
+  let spaceBefore = false;
+  const collapsed = pieces.map((piece) => {
+    let out = piece.replace(/[ \t\r\n]+/g, ' ');
+    if (spaceBefore && out.startsWith(' ')) out = out.slice(1);
+    if (out !== '') spaceBefore = out.endsWith(' ');
+    return out;
+  });
+  const whole = collapsed.join('');
+  const start = whole.length - whole.trimStart().length;
+  const end = whole.trimEnd().length;
+  let offset = 0;
+  return collapsed.map((piece) => {
+    const from = offset;
+    offset += piece.length;
+    return piece.slice(Math.max(0, start - from), Math.max(0, end - from));
+  });
 }
 
 /** Positions in `text` after which a line may break (UAX #14); the last one is `text.length`. */
@@ -74,35 +183,188 @@ export function layoutText(
   maxWidth: number,
   metrics: FontMetrics,
   warn: (chars: string[]) => void = () => undefined,
+  cache: TextMeasureCache = new TextMeasureCache(),
+  fonts?: TextFonts,
 ): TextBlock {
-  assertTextSize(text);
-  const collapsed = collapseWhitespace(toWinAnsi(text, warn));
-  const font = fontFor(style);
-  const size = style.fontSize;
-  const lineHeight = size * style.lineHeight;
-  const widthOf = (chunk: string): number => metrics.widthOf(chunk, font, size);
+  return layoutRanges(
+    [{ text, style, ...(fonts && { fonts }) }],
+    style,
+    maxWidth,
+    metrics,
+    warn,
+    cache,
+  );
+}
 
-  const length = collapsed.length;
-  // prefix[i] is the summed width of the first i characters (all single UTF-16 units after WinAnsi).
-  const prefix = new Float64Array(length + 1);
-  const charWidths = new Map<string, number>();
-  for (let i = 0; i < length; i++) {
-    const char = collapsed.charAt(i);
-    let charWidth = charWidths.get(char);
-    if (charWidth === undefined) {
-      charWidth = widthOf(char);
-      charWidths.set(char, charWidth);
+/** A font at one size, color and decoration: what a run is drawn in. */
+interface Face {
+  readonly font: FontName;
+  readonly size: number;
+  readonly color: Color;
+  readonly decoration: TextStyle['textDecoration'];
+  readonly ascent: number;
+}
+
+/** What a range contributes to the cache key: its length and everything its faces depend on. */
+function rangeKey(range: TextRange): string {
+  const { fontSize, color, textDecoration } = range.style;
+  const chain = range.fonts?.chain ?? [fontFor(range.style)];
+  return `${String(range.text.length)}:${chain.join(',')}:${String(fontSize)}:${String(color.r)},${String(color.g)},${String(color.b)},${String(color.a)}:${textDecoration}`;
+}
+
+/** The text, faces and per-unit face index of a paragraph, each range shaped in its own chain. */
+interface ShapedRanges {
+  readonly text: string;
+  readonly faces: readonly Face[];
+  readonly faceAt: Uint16Array;
+  readonly clusterStarts?: readonly number[];
+  readonly replaced: readonly string[];
+  readonly missing: readonly string[];
+}
+
+function shapeRanges(ranges: readonly TextRange[], metrics: FontMetrics): ShapedRanges {
+  const faces: Face[] = [];
+  const faceIndex = new Map<string, number>();
+  const faceOf = (font: FontName, style: TextStyle): number => {
+    const { fontSize: size, color, textDecoration: decoration } = style;
+    const key = `${font}:${String(size)}:${String(color.r)},${String(color.g)},${String(color.b)},${String(color.a)}:${decoration}`;
+    let index = faceIndex.get(key);
+    if (index === undefined) {
+      index = faces.length;
+      faces.push({ font, size, color, decoration, ascent: metrics.ascent(font, size) });
+      faceIndex.set(key, index);
     }
-    prefix[i + 1] = (prefix[i] ?? 0) + charWidth;
+    return index;
+  };
+
+  const pieces = collapseWhitespace(ranges.map((range) => normalizeText(range.text)));
+  const shapedPieces = ranges.map((range, i) => {
+    const chain = range.fonts?.chain ?? [fontFor(range.style)];
+    // Registered in chain order, so for a single range a face index is its chain index.
+    const toFace = chain.map((font) => faceOf(font, range.style));
+    return { shaped: shapeText(pieces[i] ?? '', chain, metrics), toFace };
+  });
+
+  const nonEmpty = shapedPieces.filter(({ shaped }) => shaped.text !== '');
+  const [only] = nonEmpty;
+  if (nonEmpty.length === 1 && only?.toFace.every((face, i) => face === i)) {
+    return { ...only.shaped, faces, faceAt: only.shaped.fontAt };
+  }
+
+  let text = '';
+  const faceAt: number[] = [];
+  const replaced = new Set<string>();
+  const missing = new Set<string>();
+  const anyClusters = nonEmpty.some(({ shaped }) => shaped.clusterStarts);
+  const clusterStarts: number[] = [];
+  for (const { shaped, toFace } of nonEmpty) {
+    const offset = text.length;
+    if (anyClusters) {
+      const starts = shaped.clusterStarts;
+      const count = starts ? starts.length - 1 : shaped.text.length;
+      for (let k = 0; k < count; k++) clusterStarts.push(offset + (starts ? (starts[k] ?? 0) : k));
+    }
+    for (const index of shaped.fontAt) faceAt.push(toFace[index] ?? 0);
+    text += shaped.text;
+    for (const char of shaped.replaced) replaced.add(char);
+    for (const char of shaped.missing) missing.add(char);
+  }
+  if (anyClusters) clusterStarts.push(text.length);
+  return {
+    text,
+    faces,
+    faceAt: Uint16Array.from(faceAt),
+    ...(anyClusters && { clusterStarts }),
+    replaced: [...replaced],
+    missing: [...missing],
+  };
+}
+
+/**
+ * `layoutText` for a paragraph made of ranges in different styles, such as text with pdf-spans.
+ * The paragraph breaks as one text, so a range boundary is not a break opportunity; each range is
+ * measured in its own fonts and size. `paragraph` gives the line height.
+ */
+export function layoutRanges(
+  ranges: readonly TextRange[],
+  paragraph: TextStyle,
+  maxWidth: number,
+  metrics: FontMetrics,
+  warn: (chars: string[]) => void = () => undefined,
+  cache: TextMeasureCache = new TextMeasureCache(),
+): TextBlock {
+  assertTextSize(ranges);
+  const text = ranges.length === 1 ? (ranges[0]?.text ?? '') : ranges.map((r) => r.text).join('');
+  const key = `${ranges.map(rangeKey).join(';')} ${String(paragraph.lineHeight)} ${String(maxWidth)}`;
+  const { block, replaced, missing } = cache.block(text, key, () => {
+    const shaped = shapeRanges(ranges, metrics);
+    const widthOfs = shaped.faces.map((face) => cache.widthOf(metrics, face.font, face.size));
+    return {
+      block: breakLines(shaped, paragraph.lineHeight, maxWidth, widthOfs),
+      replaced: shaped.replaced,
+      missing: shaped.missing,
+    };
+  });
+  if (replaced.length > 0) warn([...replaced]);
+  if (missing.length > 0)
+    ranges.find((range) => range.fonts?.missing)?.fonts?.missing?.([...missing]);
+  return block;
+}
+
+/** The lines of the shaped text in `maxWidth`; see `layoutText`. */
+function breakLines(
+  shaped: ShapedRanges,
+  lineHeight: number,
+  maxWidth: number,
+  widthOfs: readonly ((chunk: string) => number)[],
+): TextBlock {
+  const { text: collapsed, faces, faceAt: fontAt, clusterStarts } = shaped;
+  const length = collapsed.length;
+  const widthIn = (font: number, chunk: string): number => (widthOfs[font] ?? (() => 0))(chunk);
+
+  // Where a word may be cut at the box edge: between grapheme clusters, or anywhere when every
+  // unit is its own cluster.
+  const cut = clusterStarts ? (k: number) => clusterStarts[k] ?? length : (k: number) => k;
+  const cutIndex = clusterStarts
+    ? (position: number) => lastWhere(0, clusterStarts.length - 1, (k) => cut(k) <= position)
+    : (position: number) => position;
+
+  // prefix[i] is the summed width of the clusters that end by unit i; a cluster's width sits on
+  // its last unit.
+  const prefix = new Float64Array(length + 1);
+  for (let k = 0; cut(k) < length; k++) {
+    const from = cut(k);
+    const to = cut(k + 1);
+    for (let i = from + 1; i < to; i++) prefix[i] = prefix[from] ?? 0;
+    prefix[to] = (prefix[from] ?? 0) + widthIn(fontAt[from] ?? 0, collapsed.slice(from, to));
   }
   const breaks = length === 0 ? [] : breakPositions(collapsed);
+
+  /** `[start, end)` split where the face changes, each piece measured in its own face. */
+  const runsOf = (start: number, end: number): TextRun[] => {
+    const runs: TextRun[] = [];
+    let x = 0;
+    for (let from = start; from < end;) {
+      const index = fontAt[from] ?? 0;
+      let to = from + 1;
+      while (to < end && fontAt[to] === index) to++;
+      const text = collapsed.slice(from, to);
+      const width = widthIn(index, text);
+      const face = faces[index] ?? faces[0];
+      if (face) runs.push({ ...face, text, x, width });
+      x += width;
+      from = to;
+    }
+    return runs;
+  };
+  const widthOfRange = (start: number, end: number): number =>
+    runsOf(start, end).reduce((sum, run) => sum + run.width, 0);
 
   /** The end of the text to draw for a line `[start, end)`: a trailing space is not drawn. */
   const drawnEnd = (end: number): number => (collapsed.charCodeAt(end - 1) === 32 ? end - 1 : end);
   const guess = (start: number, end: number): number =>
     (prefix[drawnEnd(end)] ?? 0) - (prefix[start] ?? 0);
-  const measure = (start: number, end: number): number =>
-    widthOf(collapsed.slice(start, drawnEnd(end)));
+  const measure = (start: number, end: number): number => widthOfRange(start, drawnEnd(end));
   const fits = (start: number, end: number): boolean => measure(start, end) <= maxWidth;
 
   /** The largest end in `[low, high]` that fits, given that `low` fits and `high` does not. */
@@ -113,6 +375,7 @@ export function layoutText(
   const guessLimit = maxWidth * KERNING_SLACK;
 
   const lines: TextLine[] = [];
+  let top = 0;
   let start = 0;
   let nextBreak = 0;
   while (start < length) {
@@ -139,23 +402,44 @@ export function layoutText(
     }
 
     if (end < 0) {
-      // The first word is wider than the box: split it at the last character that fits.
-      const lastChar = lastWhere(start + 1, firstEnd, (index) => guess(start, index) <= guessLimit);
-      const guessEnd = Math.max(lastChar, start + 1);
-      if (fits(start, guessEnd) || guessEnd === start + 1) end = guessEnd;
-      else if (fits(start, start + 1)) end = narrow(start + 1, guessEnd, (i) => i, start);
-      else end = start + 1;
+      // The first word is wider than the box: split it after the last cluster that fits.
+      const first = cutIndex(start);
+      const lastCut = lastWhere(
+        first + 1,
+        cutIndex(firstEnd),
+        (k) => guess(start, cut(k)) <= guessLimit,
+      );
+      const guessCut = Math.max(lastCut, first + 1);
+      const guessEnd = cut(guessCut);
+      if (fits(start, guessEnd) || guessCut === first + 1) end = guessEnd;
+      else if (fits(start, cut(first + 1))) end = narrow(first + 1, guessCut, cut, start);
+      else end = cut(first + 1);
     }
 
-    const lineText = collapsed.slice(start, drawnEnd(end));
-    lines.push({ text: lineText, width: widthOf(lineText), y: lines.length * lineHeight });
+    const runs = runsOf(start, drawnEnd(end));
+    let size = 0;
+    let ascent = 0;
+    for (const run of runs) {
+      size = Math.max(size, run.size);
+      ascent = Math.max(ascent, run.ascent);
+    }
+    const height = size * lineHeight;
+    lines.push({
+      text: collapsed.slice(start, drawnEnd(end)),
+      width: runs.reduce((sum, run) => sum + run.width, 0),
+      y: top,
+      height,
+      ascent,
+      runs,
+    });
+    top += height;
     start = end;
   }
 
   return {
     lines,
     width: lines.reduce((widest, line) => Math.max(widest, line.width), 0),
-    height: lines.length * lineHeight,
+    height: top,
   };
 }
 
@@ -164,11 +448,29 @@ export function measureText(
   text: string,
   style: TextStyle,
   metrics: FontMetrics,
+  cache: TextMeasureCache = new TextMeasureCache(),
+  fonts?: TextFonts,
 ): (width: number, widthMode: number) => { width: number; height: number } {
-  assertTextSize(text);
+  return measureRanges([{ text, style, ...(fonts && { fonts }) }], style, metrics, cache);
+}
+
+/** `measureText` for a paragraph made of ranges; see `layoutRanges`. */
+export function measureRanges(
+  ranges: readonly TextRange[],
+  paragraph: TextStyle,
+  metrics: FontMetrics,
+  cache: TextMeasureCache = new TextMeasureCache(),
+): (width: number, widthMode: number) => { width: number; height: number } {
+  assertTextSize(ranges);
+  // Warnings are left to the layout that draws the text.
+  const quiet = ranges.map(({ text, style, fonts }) => ({
+    text,
+    style,
+    ...(fonts && { fonts: { chain: fonts.chain } }),
+  }));
   return (width, widthMode) => {
     const maxWidth = widthMode === MEASURE_MODE_UNDEFINED ? Infinity : width;
-    const { width: blockWidth, height } = layoutText(text, style, maxWidth, metrics);
-    return { width: blockWidth, height };
+    const block = layoutRanges(quiet, paragraph, maxWidth, metrics, undefined, cache);
+    return { width: block.width, height: block.height };
   };
 }
